@@ -7,3 +7,5 @@ pip install PyGetWindow
 
 *to get requests from other windows*
 pip install requests pygetwindow
+
+hi mohan
