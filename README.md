@@ -12,3 +12,9 @@ hi mohan
 
 
 Mohan : assign me task sir
+
+installed flask
+pip install flask
+
+get notification in windows
+pip install plyer
