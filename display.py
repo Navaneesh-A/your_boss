@@ -2,40 +2,90 @@ import time
 import json
 import requests
 import pygetwindow as gw
+from datetime import datetime, timedelta
 
 # Import modular punishment scripts
 import punish1
 import punish2
 
+# Notifications setup
+from plyer import notification
+
 PORT_5500_URL = "http://localhost:5500"
 LOG_FILE = "productivity_data.json"
+
+# Initialize global tracking variable to prevent crashing
+last_alert_state = None
+
+def send_boss_alert(title, message, urgent=False):
+    try:
+        notification.notify(
+            title=title,
+            message=message,
+            app_name="YOUR_BOSS",
+            ticker="YOUR_BOSS Alert",
+            timeout=7 if urgent else 4
+        )
+    except Exception as e:
+        print(f"Failed to send notification: {e}")
+
+def get_ist_date():
+    return (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
 
 def load_data():
     try:
         with open(LOG_FILE, 'r') as f:
-            return json.load(f)
+            data = json.load(f)
+            # PRODUCTION THRESHOLDS: Ensure fallback updates to real mode
+            if "settings" not in data:
+                data["settings"] = {}
+            data["settings"]["max_youtube_seconds"] = 1200   # 20 Minutes allowance
+            data["settings"]["min_code_seconds"] = 7200       # 2 Hours coding goal
+            if "daily_records" not in data:
+                data["daily_records"] = {}
+            return data
     except (FileNotFoundError, json.JSONDecodeError):
-        # PRODUCTION READY REALISTIC THRESHOLDS (in seconds)
         return {
             "settings": {
-                "max_youtube_seconds": 1200,   # 20 Minutes daily distraction allowance
-                "min_code_seconds": 7200       # 2 Hours daily coding target
+                "max_youtube_seconds": 1200,   # 20 Minutes allowance
+                "min_code_seconds": 7200       # 2 Hours coding goal
             },
-            "window_time": {},
+            "daily_records": {},
             "edge_history_sync": []
         }
 
 def track_and_enforce():
+    global last_alert_state
     print("= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =")
-    print("⚡ YOUR_BOSS BACKGROUND AGENT ACTIVE & ENFORCING SYSTEM RULES ⚡")
+    print(" YOUR_BOSS BACKGROUND AGENT ACTIVE & ENFORCING SYSTEM RULES ")
     print("= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =\n")
     
     current_window = None
     start_time = time.time()
     data = load_data()
-
+    
     while True:
         try:
+            
+            ist_day = get_ist_date()
+            if "daily_records" not in data:
+                data["daily_records"] = {}
+            if ist_day not in data["daily_records"]:
+                data["daily_records"][ist_day] = {}
+
+            # blocks of 5times daily
+            # Initialize YouTube block counter for the day if not present (Max 5 blocks)
+            if "_yt_block_count" not in data["daily_records"][ist_day]:
+                data["daily_records"][ist_day]["_yt_block_count"] = 1
+
+            # --- EMERGENCY BYPASS SHORTCUT ---
+            active_window = gw.getActiveWindow()
+            if active_window and "boss-override" in active_window.title.lower():
+                print("[BYPASS] : Secret override window detected. Freezing Boss enforcement.")
+                time.sleep(5)
+                continue
+
+
             # --- 1. Track Active Window Time ---
             active_window = gw.getActiveWindow()
             if active_window and active_window.title:
@@ -46,7 +96,9 @@ def track_and_enforce():
                     start_time = time.time()
                 elif active_title != current_window:
                     duration = round(time.time() - start_time, 2)
-                    data["window_time"][current_window] = data["window_time"].get(current_window, 0) + duration
+                    
+                    # Log directly to daily records
+                    data["daily_records"][ist_day][current_window] = data["daily_records"][ist_day].get(current_window, 0) + duration
                     
                     current_window = active_title
                     start_time = time.time()
@@ -57,76 +109,83 @@ def track_and_enforce():
                 if res.status_code == 200:
                     data["edge_history_sync"] = res.json()
             except requests.exceptions.RequestException:
-                pass  # Fallback gracefully if port 5500 server is down
+                pass
 
-            # --- 3. Evaluate Time Logs ---
+            # --- 3. Evaluate Time Logs (Smart Context Classification) ---
             youtube_wasted_time = 0
             coding_time = 0
-            
-            for title, seconds in data["window_time"].items():
-                if "YouTube" in title:
-                    youtube_wasted_time += seconds
-                elif "Visual Studio Code" in title:
+            learning_keywords = ["tutorial", "course", "coding", "learn", "programming", "dev", "data structure", "leetcode"]
+
+            for title, seconds in data["daily_records"][ist_day].items():
+                # ADDED THIS 
+                if title.startswith("_"): # Skip system keys
+                    continue
+                title_lower = title.lower()
+                if "youtube" in title_lower:
+                    is_learning = any(kw in title_lower for kw in learning_keywords)
+                    if is_learning:
+                        coding_time += seconds  
+                    else:
+                        youtube_wasted_time += seconds  
+                elif "visual studio code" in title_lower:
+                    coding_time += seconds
+                elif any(domain in title_lower for domain in ["github", "gemini", "google search", "stackoverflow"]):
                     coding_time += seconds
 
-            limit = data.get("settings", {}).get("max_youtube_seconds", 1200)
-            coding_goal = data.get("settings", {}).get("min_code_seconds", 7200)
-            
+            limit = data["settings"]["max_youtube_seconds"]
+            coding_goal = data["settings"]["min_code_seconds"]
+            current_block = data["daily_records"][ist_day]["_yt_block_count"]
             remaining_youtube = max(0, limit - youtube_wasted_time)
-            remaining_code = max(0, coding_goal - coding_time)
+           #remaining_code = max(0, coding_goal - coding_time)
             
-            # --- 4. Predictive Command Line Dashboard ---
-            print("=" * 65)
-            print(f"[CURRENT FOCUS] : '{current_window}'")
-            print(f"[METRICS]       : YouTube: {round(youtube_wasted_time/60, 1)}m/{round(limit/60, 1)}m | Code: {round(coding_time/60, 1)}m/{round(coding_goal/60, 1)}m")
-            
-            if "YouTube" in (current_window or ""):
-                print(f"[PREDICTION]    : 🚨 Boss Warning: You are burning down your buffer time!")
-                print(f"[FORECAST]      : System lockdown will execute in {round(remaining_youtube, 1)}s.")
-                print(f"[ACTION PLAN]   : Minimize Edge immediately and return to coding context.")
-                
-            elif "Visual Studio Code" in (current_window or ""):
-                if remaining_code > 0:
-                    print(f"[PREDICTION]    : Good. Productive coding block detected.")
-                    print(f"[FORECAST]      : Complete {round(remaining_code/60, 1)} more minutes to clear today's core milestone.")
-                else:
-                    print(f"[PREDICTION]    : Production target achieved! You are clear for the day.")
-                    print(f"[FORECAST]      : System safe from unexpected lockdowns.")
-                print(f"[ACTION PLAN]   : Keep pushing the current codebase architecture forward.")
-                
-            else:
-                print(f"[PREDICTION]    : Neutral operational state.")
-                print(f"[FORECAST]      : Remaining allowance: {round(remaining_youtube/60, 1)}m until hard action takes place.")
-                print(f"[ACTION PLAN]   : Switch into an IDE to prevent passive window drift.")
-            print("=" * 65 + "\n")
+            # --- 4. Predictive Notifications ---
+            if "YouTube" in (current_window or "") and "tutorial" not in (current_window or "").lower():
+                if last_alert_state != "warning" and remaining_youtube < 60:
+                    send_boss_alert(
+                        title=f"⚠️ YOUTUBE BLOCK {current_block} WARNING",
+                        message=f"Block lockdown executing in {round(remaining_youtube)} seconds!"
+                    )
+                    last_alert_state = "warning"
 
             # --- 5. Trigger System Punishment Array ---
             if youtube_wasted_time > limit:
-                print("\n🚨🚨🚨 DISTRACTION LIMIT EXCEEDED! EXECUTING LOCKDOWN PROCEDURES 🚨🚨🚨\n")
-                
-                try:
-                    punish1.trigger_tab_kill()
-                except Exception as e:
-                    print(f"[ERROR]: Failed executing punish1.py -> {e}")
+                if current_block <= 5:
+                    print(f"\n🚨🚨🚨 YOUTUBE BLOCK {current_block} EXCEEDED! EXECUTING LOCKDOWN 🚨🚨🚨\n")
+                    send_boss_alert(
+                        title=f"🚨 BLOCK {current_block} CROSSOVER LOCKDOWN 🚨",
+                        message="Threshold crossed. Resetting your timer block.",
+                        urgent=True
+                    )
                     
-                try:
-                    punish2.trigger_audio_alarm()
-                except Exception as e:
-                    print(f"[ERROR]: Failed executing punish2.py -> {e}")
-                
-                # Reset structural dict elements to drop out of continuous breach states smoothly
-                youtube_keys = [k for k in data["window_time"].keys() if "YouTube" in k]
-                for k in youtube_keys:
-                    data["window_time"][k] = 0
-                start_time = time.time()
+                    try:punish1.trigger_tab_kill()
+                    except Exception as e: print(e)
+                    try:punish2.trigger_audio_alarm()
+                    except Exception as e: print(e)
 
-            # --- 6. Save State to JSON Disk ---
+                    # Reset ONLY YouTube logs for this current block day pool
+                    youtube_keys = [k for k in data["daily_records"][ist_day].keys() if "youtube" in k.lower() and not any(lk in k.lower() for lk in learning_keywords)]
+                    for k in youtube_keys:
+                        data["daily_records"][ist_day][k] = 0
+                    
+                    # Advance to the next allocation block
+                    data["daily_records"][ist_day]["_yt_block_count"] += 1
+                else:
+                    # Absolute total burnout (All 5 blocks used up)
+                    print("\n🚨🚨🚨 ALL 5 DAILY BLOCKS USED UP! HARD SYSTEM LOCKDOWN 🚨🚨🚨\n")
+                    try:punish1.trigger_tab_kill()
+                    except Exception as e: print(e)
+                
+                start_time = time.time()
+                last_alert_state = "breached"
+
+            # --- 6. Save State ---
             with open(LOG_FILE, 'w') as f:
                 json.dump(data, f, indent=4)
                 
         except Exception as e:
             print(f"[CRITICAL SYSTEM ERROR]: {e}")
             
+        # Hard 5-second interval to allow emergency typing in terminal if needed!
         time.sleep(5)
 
 if __name__ == "__main__":
