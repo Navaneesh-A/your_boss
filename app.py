@@ -16,8 +16,8 @@ def load_data():
                 data = json.load(f)
                 if "settings" not in data:
                     data["settings"] = {}
-                data["settings"]["max_youtube_seconds"] = 1200 # 20 mins production target
-                data["settings"]["min_code_seconds"] = 7200    # 2 hours production target
+                data["settings"]["max_youtube_seconds"] = 1200
+                data["settings"]["min_code_seconds"] = 7200
                 return data
         except json.JSONDecodeError:
             pass
@@ -88,10 +88,58 @@ HTML_TEMPLATE = """
         .recent-box { background: #252525; padding: 15px; border-radius: 6px; border-left: 4px solid #ffb400; }
         .recent-box h4 { margin: 0 0 8px 0; font-size: 0.95rem; color: #ffffff; display: flex; align-items: center; gap: 8px; }
         .recent-box .time-stat { font-size: 1.4rem; font-weight: bold; color: #ffb400; }
-    </style>
+        .status-panel { padding: 15px; margin-bottom: 20px; border-radius: 6px; background: #1c1c1c; border: 1px solid #333; display: flex; justify-content: space-between; align-items: center;}
+        .flash-banner { padding: 12px; background: #007bff; color: white; font-weight: bold; text-align: center; border-radius: 6px; margin-bottom: 20px; font-size: 1.1rem; }
+        /* Smooth fade-in and slide-out animation */
+@keyframes slideFade {
+    0% { opacity: 0; transform: translateY(-20px); }
+    10% { opacity: 1; transform: translateY(0); }
+    90% { opacity: 1; transform: translateY(0); }
+    100% { opacity: 0; transform: translateY(-20px); }
+}
+
+.flash-banner {
+    /* Fixed overlay style */
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9999; /* Forces it above all other elements */
+    
+    /* Presentation styles */
+    padding: 14px 28px;
+    background: #007bff;
+    color: white;
+    font-weight: bold;
+    text-align: center;
+    border-radius: 8px;
+    font-size: 1.1rem;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5); /* Adds contrast shadow */
+    
+    /* Smooth animation */
+    animation: slideFade 6s ease-in-out forwards;
+}
+     </style>
 </head>
 <body>
     <div class="container">
+        {% if metrics.flash_message %}
+        <div id="flash-banner" class="flash-banner">
+            ⚡ {{ metrics.flash_message }}
+        </div>
+        {% endif %}
+
+        <div class="status-panel">
+            <div>
+                <h3 style="margin:0 0 5px 0; color:#a5a5a5;">🖥️ Monitor State</h3>
+                <span>System Status: <strong style="color: {% if metrics.status == 'Active' %}#39ea49{% else %}#ff3333{% endif %};">{{ metrics.status }}</strong></span>
+            </div>
+            <div style="text-align: right;">
+                <h3 style="margin:0 0 5px 0; color:#a5a5a5;">👣 Absences</h3>
+                <span>Away Counter: <strong style="color:#ffb400;">{{ metrics.away_count }} times today</strong></span>
+            </div>
+        </div>
+
         <div class="header-row">
             <h1>⚡ YOUR_BOSS Operating Dashboard</h1>
             <form method="GET" action="/">
@@ -154,6 +202,12 @@ HTML_TEMPLATE = """
             </div>
         </div>
     </div>
+    <script>
+        setTimeout(function() {
+            var banner = document.getElementById('flash-banner');
+            if (banner) banner.style.display = 'none';
+        }, 6000);
+    </script>
 </body>
 </html>
 """
@@ -163,6 +217,7 @@ def home():
     raw_data = load_data()
     today_ist = get_ist_date()
     daily_records = raw_data.get("daily_records", {})
+    metrics = raw_data.get("status_metrics", {"status": "Active", "away_count": 0, "flash_message": ""})
     
     available_dates = sorted(list(daily_records.keys()), reverse=True)
     if today_ist not in available_dates:
@@ -173,7 +228,6 @@ def home():
     
     sorted_raw_windows = sorted(target_day_windows.items(), key=lambda item: item[1], reverse=True)
     
-    # Calculate live progress bars for the selected day metrics
     yt_spent = 0
     code_spent = 0
     learning_keywords = ["tutorial", "course", "coding", "learn", "programming", "dev", "data structure", "leetcode"]
@@ -182,7 +236,6 @@ def home():
     for window_title, seconds in target_day_windows.items():
         title_lower = window_title.lower()
         
-        # Accumulate metrics variables for out-of displays
         if "youtube" in title_lower:
             if any(kw in title_lower for kw in learning_keywords):
                 code_spent += seconds
@@ -201,6 +254,7 @@ def home():
     return render_template_string(
         HTML_TEMPLATE, 
         data=raw_data, 
+        metrics=metrics,
         groups=sorted_groups, 
         raw_windows=sorted_raw_windows, 
         available_dates=available_dates, 
